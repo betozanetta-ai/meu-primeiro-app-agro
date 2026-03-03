@@ -2,46 +2,71 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
-# Configuração da página
-st.set_page_config(page_title="AgroDecisão Ceagesp", page_icon="🌾")
+# Configuração da página para parecer um App profissional
+st.set_page_config(page_title="AgroDecisão Ceagesp", page_icon="🌾", layout="centered")
 
-st.title("🌾 AgroDecisão: Momento de Venda")
+st.title("🌾 AgroDecisão: Lucro Real")
 st.markdown("---")
 
-# --- BUSCA DE DADOS ---
-@st.cache_data(ttl=3600) # Faz o app não baixar tudo de novo toda vez que você clica
+# --- BUSCA DE DADOS (CHICAGO E DÓLAR) ---
+@st.cache_data(ttl=3600)
 def carregar_dados_mercado():
     dolar = yf.Ticker("USDBRL=X").history(period="1d")['Close'].iloc[-1]
-    soja_chicago = yf.Ticker("ZS=F").history(period="1d")['Close'].iloc[-1]
-    return dolar, soja_chicago
+    # Soja Chicago (ZS=F) - valor em bushels
+    soja_chicago_bushel = yf.Ticker("ZS=F").history(period="1d")['Close'].iloc[-1]
+    # Conversão simples: Bushel para Saca (60kg) -> fator aprox. 2.204
+    preco_saca_chicago_usd = soja_chicago_bushel * 2.204
+    return dolar, preco_saca_chicago_usd
 
-dolar, chicago = carregar_dados_mercado()
+dolar, soja_usd = carregar_dados_mercado()
+preco_referencia_reais = soja_usd * dolar
 
-# --- INPUTS DO USUÁRIO ---
-col1, col2 = st.columns(2)
-with col1:
-    custo_producao = st.number_input("Seu Custo (R$/Saca)", value=110.0)
-with col2:
-    frete_regiao = st.number_input("Frete até Comprador (R$)", value=12.0)
+# --- LOGÍSTICA E FRETE (O pulo do gato) ---
+st.subheader("📍 Simulação por Região")
 
-# --- LÓGICA DE NEGÓCIO ---
-# Aqui simulamos o preço que buscamos do CEPEA ou Notícias Agrícolas
-preco_referencia = 138.50 # Você pode conectar a função do CEPEA aqui
-preco_liquido = preco_referencia - frete_regiao
-margem = ((preco_liquido - custo_producao) / custo_producao) * 100
+# Tabela de fretes médios (R$ por saca) - Você pode ajustar esses valores depois
+tabela_fretes = {
+    "Sorriso (MT)": 25.00,
+    "Rio Verde (GO)": 18.50,
+    "Cascavel (PR)": 12.00,
+    "Passo Fundo (RS)": 11.00,
+    "Londrina (PR)": 10.00,
+    "Outra / Manual": 0.00
+}
 
-# --- EXIBIÇÃO ---
-st.metric(label="Preço Líquido na Fazenda", value=f"R$ {preco_liquido:.2f}", 
-          delta=f"{(preco_liquido - custo_producao):.2f} de lucro por saca")
+escolha = st.selectbox("Selecione a origem da soja:", list(tabela_fretes.keys()))
 
-if margem > 15:
-    st.success(f"ÓTIMA OPORTUNIDADE: Margem de {margem:.1f}%")
-    st.write("💡 Sugestão: Trave pelo menos 20% da safra hoje.")
-elif margem > 0:
-    st.warning(f"MARGEM APERTADA: {margem:.1f}%")
-    st.write("💡 Sugestão: Aguarde melhora no dólar ou frete.")
+if escolha == "Outra / Manual":
+    frete_final = st.number_input("Informe o valor do frete (R$):", value=15.0)
 else:
-    st.error(f"PREJUÍZO DETECTADO: {margem:.1f}%")
+    frete_final = tabela_fretes[escolha]
+    st.info(f"🚚 Frete estimado para {escolha}: **R$ {frete_final:.2f}/saca**")
 
+# --- INPUT DE CUSTO ---
+custo_producao = st.number_input("Seu Custo de Produção (R$/Saca):", value=100.0)
+
+# --- CÁLCULO FINAL ---
+preco_liquido = preco_referencia_reais - frete_final
+lucro_por_saca = preco_liquido - custo_producao
+margem = (lucro_por_saca / custo_producao) * 100
+
+# --- EXIBIÇÃO DO RESULTADO ---
 st.markdown("---")
-st.write(f"**Indicadores Globais:** Dólar R$ {dolar:.2f} | Chicago US$ {chicago:.2f}")
+col1, col2 = st.columns(2)
+
+with col1:
+    st.metric(label="Preço Líquido (Fazenda)", value=f"R$ {preco_liquido:.2f}")
+with col2:
+    color = "normal" if lucro_por_saca > 0 else "inverse"
+    st.metric(label="Lucro por Saca", value=f"R$ {lucro_por_saca:.2f}", delta=f"{margem:.1f}%", delta_color=color)
+
+if margem > 20:
+    st.success("✅ EXCELENTE MARGEM: Hora de avaliar venda ou trava!")
+elif margem > 5:
+    st.warning("⚠️ MARGEM APERTADA: Cuidado com as oscilações do dólar.")
+else:
+    st.error("🚨 RISCO DE PREJUÍZO: Reveja a estratégia logística ou aguarde Chicago.")
+
+st.sidebar.markdown("### Indicadores de Mercado")
+st.sidebar.write(f"💵 Dólar: R$ {dolar:.2f}")
+st.sidebar.write(f"📈 Chicago (Saca): US$ {soja_usd:.2f}")
